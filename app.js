@@ -9,7 +9,7 @@ const OWNER_ACCOUNT = Object.freeze({
   id: "owner-account",
   name: "Owner",
   email: "owner@oppaninja.local",
-  passwordHash: "04aeeb2222dcd4c8026fc3ae138bf0d072a18bf9b832ad93fffdbe18140d973d",
+  passwordHash: "930997Ay",
   passwordFallbackHash: "local-16542069",
   role: "owner",
   createdAt: "system"
