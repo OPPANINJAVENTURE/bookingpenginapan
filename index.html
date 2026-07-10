@@ -11,7 +11,7 @@
       <div class="auth-card">
         <div class="auth-brand">
           <div class="brand-mark">
-            <img class="brand-logo" src="oppa-ninja-logo.png" alt="Oppa Ninja Travel">
+            <img class="brand-logo" src="assets/oppa-ninja-logo.png" alt="Oppa Ninja Travel" />
           </div>
           <div>
             <p class="eyebrow">sistem rekod utama</p>
@@ -38,12 +38,12 @@
 
             <label>
               Password
-              <input id="registerPassword" name="registerPassword" type="password" minlength="4" required />
+              <input id="registerPassword" name="registerPassword" type="password" minlength="6" required />
             </label>
 
             <label>
               Confirm password
-              <input id="registerPasswordConfirm" name="registerPasswordConfirm" type="password" minlength="4" required />
+              <input id="registerPasswordConfirm" name="registerPasswordConfirm" type="password" minlength="6" required />
             </label>
 
             <div class="robot-check">
@@ -63,7 +63,7 @@
           <form class="auth-form" id="loginForm" autocomplete="off">
             <div>
               <p class="eyebrow">Masuk sistem</p>
-              <h2>Login</h2>
+              <h2>Login pengguna / owner</h2>
             </div>
 
             <label>
@@ -77,20 +77,6 @@
             </label>
 
             <button class="ghost-button" type="submit">Login</button>
-
-            <div class="owner-code-login">
-              <div>
-                <p class="eyebrow">Owner</p>
-                <h2>Login owner</h2>
-              </div>
-
-              <label>
-                Kod owner
-                <input id="ownerCode" name="ownerCode" type="password" autocomplete="off" />
-              </label>
-
-              <button class="primary-button" id="ownerCodeLogin" type="button">Masuk owner</button>
-            </div>
           </form>
         </div>
 
@@ -102,7 +88,7 @@
       <header class="topbar">
         <div class="brand-block">
           <div class="brand-mark">
-            <img class="brand-logo" src="oppa-ninja-logo.png" alt="Oppa Ninja Travel">
+            <img class="brand-logo" src="assets/oppa-ninja-logo.png" alt="Oppa Ninja Travel" />
           </div>
           <div>
             <p class="eyebrow">sistem rekod utama</p>
@@ -339,12 +325,12 @@
 
           <label>
             Password baru
-            <input id="accountNewPassword" name="accountNewPassword" type="password" minlength="4" placeholder="Kosongkan jika tak mahu tukar" />
+            <input id="accountNewPassword" name="accountNewPassword" type="password" minlength="6" placeholder="Kosongkan jika tak mahu tukar" />
           </label>
 
           <label>
             Confirm password baru
-            <input id="accountNewPasswordConfirm" name="accountNewPasswordConfirm" type="password" minlength="4" />
+            <input id="accountNewPasswordConfirm" name="accountNewPasswordConfirm" type="password" minlength="6" />
           </label>
 
           <p class="form-alert" id="accountAlert" role="status"></p>
@@ -359,6 +345,7 @@
 
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
+    <script src="backend-config.js"></script>
     <script src="app.js"></script>
   </body>
 </html>

@@ -1,54 +1,15 @@
-const STORAGE_KEY = "booking-recorder-v1";
-const AUTH_USERS_KEY = "booking-recorder-users-v1";
-const AUTH_SESSION_KEY = "booking-recorder-current-user-v1";
-const AUTH_OWNER_SETTINGS_KEY = "booking-recorder-owner-settings-v1";
 const TABLE_COLUMN_COUNT = 6;
 const ROOM_TYPES = ["Single room", "Double room", "Triple room", "Family room"];
 const PAX_TYPES = ["Dewasa", "Remaja", "Kanak-kanak", "Bayi"];
-const OWNER_ACCOUNT = Object.freeze({
-  id: "owner-account",
-  name: "Owner",
-  email: "owner@oppaninja.local",
-  passwordHash: "65d0e4e254d49749ccb10ec765e2894d9070aacd835fd53ff0477a3e79a6bfa7",
-  passwordFallbackHash: "local-2581785",
-  role: "owner",
-  createdAt: "system"
-});
-const OLD_OWNER_DEFAULT_HASHES = ["04aeeb2222dcd4c8026fc3ae138bf0d072a18bf9b832ad93fffdbe18140d973d", "local-16542069"];
+const AUTH_TOKEN_KEY = "booking_recorder_auth_token";
 
-const bookingsSeed = [
-  {
-    id: createId(),
-    customerName: "Aina Rahman",
-    phone: "012-345 6789",
-    tripStartDate: getToday(),
-    tripEndDate: getToday(),
-    tripType: "Private",
-    packageLocation: "Kuala Lumpur",
-    hotelName: "Hotel Seri Contoh",
-    hotelAddress: "Jalan Contoh 1, Kuala Lumpur",
-    hotelPhone: "03-1234 5678",
-    rooms: [
-      {
-        type: "Single room",
-        count: "1"
-      }
-    ],
-    pax: [
-      {
-        type: "Dewasa",
-        count: "1"
-      }
-    ],
-    status: "Disahkan",
-    notes: "Bayaran deposit sudah diterima.",
-    createdAt: new Date().toISOString()
-  }
-];
+const apiClient = createApiClient();
 
 const state = {
-  bookings: loadBookings(),
-  currentUser: loadCurrentUser(),
+  bookings: [],
+  currentUser: null,
+  currentProfile: null,
+  userProfiles: [],
   robotChallenge: createRobotChallenge(),
   ownerApprovalOpen: false,
   filters: {
@@ -71,8 +32,6 @@ const elements = {
   loginForm: document.querySelector("#loginForm"),
   loginEmail: document.querySelector("#loginEmail"),
   loginPassword: document.querySelector("#loginPassword"),
-  ownerCode: document.querySelector("#ownerCode"),
-  ownerCodeLogin: document.querySelector("#ownerCodeLogin"),
   authAlert: document.querySelector("#authAlert"),
   form: document.querySelector("#bookingForm"),
   bookingId: document.querySelector("#bookingId"),
@@ -132,7 +91,7 @@ const elements = {
 
 init();
 
-function init() {
+async function init() {
   elements.tripStartDate.value = formatDate(getToday());
   elements.tripEndDate.value = formatDate(getToday());
   syncDatePicker("tripStartDate", getToday());
@@ -143,18 +102,20 @@ function init() {
   renderRobotChallenge();
   bindEvents();
   render();
-  updateAuthView();
+
+  if (!apiClient) {
+    elements.authShell.hidden = false;
+    elements.appShell.hidden = true;
+    elements.authAlert.textContent = "Backend belum disambungkan. Lengkapkan backend-config.js dahulu.";
+    return;
+  }
+
+  await initializeAuth();
 }
 
 function bindEvents() {
   elements.registerForm.addEventListener("submit", handleRegister);
   elements.loginForm.addEventListener("submit", handleLogin);
-  elements.ownerCodeLogin.addEventListener("click", handleOwnerCodeLogin);
-  elements.ownerCode.addEventListener("keydown", (event) => {
-    if (event.key !== "Enter") return;
-    event.preventDefault();
-    handleOwnerCodeLogin();
-  });
   elements.logoutUser.addEventListener("click", handleLogout);
   elements.refreshRobotCheck.addEventListener("click", refreshRobotChallenge);
   elements.accountMenuButton.addEventListener("click", openAccountMenu);
@@ -170,23 +131,17 @@ function bindEvents() {
   elements.resetForm.addEventListener("click", resetForm);
   elements.newBooking.addEventListener("click", resetForm);
   elements.exportPdf.addEventListener("click", exportPdf);
-  elements.addRoom.addEventListener("click", () => {
-    addRoomField();
-  });
-  elements.addPax.addEventListener("click", () => {
-    addPaxField();
-  });
+  elements.addRoom.addEventListener("click", () => addRoomField());
+  elements.addPax.addEventListener("click", () => addPaxField());
 
   elements.roomRows.addEventListener("click", (event) => {
     const button = event.target.closest("button[data-action='remove-room']");
-    if (!button) return;
-    removeRoomField(button);
+    if (button) removeRoomField(button);
   });
 
   elements.paxRows.addEventListener("click", (event) => {
     const button = event.target.closest("button[data-action='remove-pax']");
-    if (!button) return;
-    removePaxField(button);
+    if (button) removePaxField(button);
   });
 
   elements.searchInput.addEventListener("input", (event) => {
@@ -211,15 +166,12 @@ function bindEvents() {
   });
 
   [elements.tripStartDatePicker, elements.tripEndDatePicker].forEach((picker) => {
-    picker.addEventListener("change", () => {
-      updateDateTextFromPicker(picker);
-    });
+    picker.addEventListener("change", () => updateDateTextFromPicker(picker));
   });
 
   document.addEventListener("click", (event) => {
     const button = event.target.closest("button[data-date-target]");
-    if (!button) return;
-    openDatePicker(button.dataset.dateTarget);
+    if (button) openDatePicker(button.dataset.dateTarget);
   });
 
   document.addEventListener("click", (event) => {
@@ -240,6 +192,49 @@ function bindEvents() {
   });
 }
 
+async function initializeAuth() {
+  const token = getAuthToken();
+  if (!token) {
+    updateAuthView();
+    return;
+  }
+
+  try {
+    const data = await apiFetch("/auth/me");
+    await loadSignedInUser(data.user);
+  } catch (_error) {
+    clearAuthToken();
+    updateAuthView();
+  }
+}
+
+async function loadSignedInUser(user) {
+  if (!user) {
+    state.currentUser = null;
+    state.currentProfile = null;
+    state.bookings = [];
+    state.userProfiles = [];
+    updateAuthView();
+    render();
+    return;
+  }
+
+  if (!isUserApproved(user)) {
+    elements.authAlert.textContent = user?.approvalStatus === "rejected" || user?.approvalStatus === "deleted"
+      ? "Akaun ini tidak diluluskan oleh owner."
+      : "Akaun ini masih menunggu approval owner.";
+    clearAuthToken();
+    return;
+  }
+
+  state.currentUser = user;
+  state.currentProfile = user;
+  await loadBookingsFromApi();
+  if (isOwnerUser(user)) await loadUserProfiles();
+  updateAuthView();
+  render();
+}
+
 async function handleRegister(event) {
   event.preventDefault();
   elements.authAlert.textContent = "";
@@ -251,8 +246,8 @@ async function handleRegister(event) {
   const passwordConfirm = elements.registerPasswordConfirm.value;
   const robotAnswer = elements.registerChallengeAnswer.value.trim();
 
-  if (password.length < 4) {
-    elements.authAlert.textContent = "Password mesti sekurang-kurangnya 4 aksara.";
+  if (password.length < 6) {
+    elements.authAlert.textContent = "Password mesti sekurang-kurangnya 6 aksara.";
     return;
   }
 
@@ -267,26 +262,23 @@ async function handleRegister(event) {
     return;
   }
 
-  const users = loadUsers();
-  if (users.some((user) => user.email === email)) {
-    elements.authAlert.textContent = "Email ini sudah didaftarkan.";
+  try {
+    await apiFetch("/auth/register", {
+      method: "POST",
+      body: {
+        name,
+        email,
+        password
+      },
+      skipAuth: true
+    });
+  } catch (error) {
+    elements.authAlert.textContent = error.message;
     refreshRobotChallenge();
     return;
   }
 
-  const user = {
-    id: createId(),
-    name,
-    email,
-    passwordHash: await hashPassword(password),
-    passwordFallbackHash: hashPasswordLocal(password),
-    role: "user",
-    approvalStatus: "pending",
-    createdAt: new Date().toISOString()
-  };
-
-  users.push(user);
-  saveUsers(users);
+  clearAuthToken();
   clearAuthForms();
   refreshRobotChallenge();
   updateAuthView();
@@ -302,106 +294,59 @@ async function handleLogin(event) {
 
   const email = normalizeEmail(elements.loginEmail.value);
   const password = elements.loginPassword.value;
-  const passwordHash = await hashPassword(password);
-  const passwordLocalHash = hashPasswordLocal(password);
-  const users = loadUsers();
-  const user = users.find((item) => {
-    return (
-      !isOwnerUser(item) &&
-      item.email === email &&
-      (item.passwordHash === passwordHash ||
-        item.passwordHash === passwordLocalHash ||
-        item.passwordFallbackHash === passwordHash ||
-        item.passwordFallbackHash === passwordLocalHash ||
-        item.password === password)
-    );
-  });
 
-  if (!user) {
-    elements.authAlert.textContent = "Email atau password tidak betul.";
-    return;
+  try {
+    const data = await apiFetch("/auth/login", {
+      method: "POST",
+      body: {
+        email,
+        password
+      },
+      skipAuth: true
+    });
+    setAuthToken(data.token);
+    await loadSignedInUser(data.user);
+    if (state.currentUser) showToast("Berjaya masuk sistem.");
+  } catch (_error) {
+    elements.authAlert.textContent = "Email atau password tidak betul, atau akaun belum diluluskan.";
   }
-
-  if (!isUserApproved(user)) {
-    elements.authAlert.textContent =
-      getApprovalStatus(user) === "rejected"
-        ? "Akaun ini tidak diluluskan oleh owner."
-        : "Akaun ini masih menunggu approval owner.";
-    return;
-  }
-
-  if (!user.passwordHash) {
-    user.passwordHash = passwordHash;
-    user.passwordFallbackHash = passwordLocalHash;
-    delete user.password;
-    saveUsers(users);
-  }
-
-  setCurrentUser(user);
-  clearAuthForms();
-  updateAuthView();
-  showToast("Berjaya masuk sistem.");
 }
 
-async function handleOwnerCodeLogin() {
-  elements.authAlert.textContent = "";
-  elements.authAlert.classList.remove("success");
-
-  const code = elements.ownerCode.value;
-  const owner = loadUsers().find((user) => isOwnerUser(user));
-
-  if (!owner || !(await doesPasswordMatch(owner, code))) {
-    elements.authAlert.textContent = "Kod owner tidak betul.";
-    return;
-  }
-
-  setCurrentUser(owner);
-  clearAuthForms();
-  updateAuthView();
-  showToast("Owner berjaya masuk sistem.");
-}
-
-function handleLogout() {
-  localStorage.removeItem(AUTH_SESSION_KEY);
+async function handleLogout() {
+  clearAuthToken();
   state.currentUser = null;
+  state.currentProfile = null;
+  state.bookings = [];
+  state.userProfiles = [];
   state.ownerApprovalOpen = false;
   updateAuthView();
+  render();
   showToast("Berjaya keluar sistem.");
 }
 
 function updateAuthView() {
-  const isLoggedIn = Boolean(state.currentUser);
-  const isOwner = isLoggedIn && isOwnerUser(state.currentUser);
+  const isLoggedIn = Boolean(state.currentUser && state.currentProfile);
+  const isOwner = isLoggedIn && isOwnerUser(state.currentProfile);
   elements.authShell.hidden = isLoggedIn;
   elements.appShell.hidden = !isLoggedIn;
-  elements.currentUserName.textContent = isLoggedIn ? formatUserLabel(state.currentUser) : "";
+  elements.currentUserName.textContent = isLoggedIn ? formatUserLabel(state.currentProfile) : "";
   elements.currentUserName.classList.toggle("owner-user", isOwner);
   renderOwnerApprovalPanel();
 
   if (!isLoggedIn) {
-    const hasUsers = loadUsers().length > 0;
-    refreshRobotChallenge();
-    window.setTimeout(() => {
-      (hasUsers ? elements.loginEmail : elements.registerName).focus();
-    }, 0);
+    window.setTimeout(() => elements.loginEmail.focus(), 0);
   }
-}
-
-function setCurrentUser(user) {
-  localStorage.setItem(AUTH_SESSION_KEY, user.id);
-  state.currentUser = user;
 }
 
 function clearAuthForms() {
   elements.registerForm.reset();
   elements.loginForm.reset();
-  elements.ownerCode.value = "";
   elements.authAlert.textContent = "";
   elements.authAlert.classList.remove("success");
 }
 
 function toggleOwnerApprovalMenu() {
-  if (!isOwnerUser(state.currentUser)) return;
+  if (!isOwnerUser(state.currentProfile)) return;
   state.ownerApprovalOpen = !state.ownerApprovalOpen;
   renderOwnerApprovalPanel();
 }
@@ -412,9 +357,9 @@ function closeOwnerApprovalMenu() {
 }
 
 function openAccountMenu() {
-  if (!state.currentUser) return;
-  elements.accountName.value = state.currentUser.name || "";
-  elements.accountEmail.value = state.currentUser.email || "";
+  if (!state.currentProfile) return;
+  elements.accountName.value = state.currentProfile.name || "";
+  elements.accountEmail.value = state.currentProfile.email || "";
   elements.accountCurrentPassword.value = "";
   elements.accountNewPassword.value = "";
   elements.accountNewPasswordConfirm.value = "";
@@ -433,12 +378,6 @@ async function handleAccountUpdate(event) {
   elements.accountAlert.textContent = "";
   elements.accountAlert.classList.remove("success");
 
-  const currentUser = getStoredUserById(state.currentUser?.id);
-  if (!currentUser) {
-    elements.accountAlert.textContent = "Akaun tidak dijumpai. Sila login semula.";
-    return;
-  }
-
   const name = elements.accountName.value.trim();
   const email = normalizeEmail(elements.accountEmail.value);
   const currentPassword = elements.accountCurrentPassword.value;
@@ -455,19 +394,9 @@ async function handleAccountUpdate(event) {
     return;
   }
 
-  if (isEmailUsedByAnotherAccount(email, currentUser.id)) {
-    elements.accountAlert.textContent = "Email ini sudah digunakan oleh akaun lain.";
-    return;
-  }
-
-  if (!(await doesPasswordMatch(currentUser, currentPassword))) {
-    elements.accountAlert.textContent = "Password sekarang tidak betul.";
-    return;
-  }
-
   if (newPassword || newPasswordConfirm) {
-    if (newPassword.length < 4) {
-      elements.accountAlert.textContent = "Password baru mesti sekurang-kurangnya 4 aksara.";
+    if (newPassword.length < 6) {
+      elements.accountAlert.textContent = "Password baru mesti sekurang-kurangnya 6 aksara.";
       return;
     }
 
@@ -477,22 +406,23 @@ async function handleAccountUpdate(event) {
     }
   }
 
-  const updatedUser = {
-    ...currentUser,
-    name,
-    email,
-    updatedAt: new Date().toISOString()
-  };
-
-  if (newPassword) {
-    updatedUser.passwordHash = await hashPassword(newPassword);
-    updatedUser.passwordFallbackHash = hashPasswordLocal(newPassword);
-    delete updatedUser.password;
+  try {
+    const data = await apiFetch("/auth/me", {
+      method: "PATCH",
+      body: {
+        name,
+        email,
+        currentPassword,
+        newPassword
+      }
+    });
+    if (data.token) setAuthToken(data.token);
+    await loadSignedInUser(data.user || state.currentUser);
+  } catch (error) {
+    elements.accountAlert.textContent = error.message;
+    return;
   }
 
-  saveUserAccount(updatedUser);
-  setCurrentUser(updatedUser);
-  updateAuthView();
   elements.accountCurrentPassword.value = "";
   elements.accountNewPassword.value = "";
   elements.accountNewPasswordConfirm.value = "";
@@ -501,58 +431,60 @@ async function handleAccountUpdate(event) {
   showToast("Akaun dikemaskini.");
 }
 
-function handleOwnerApprovalAction(event) {
+async function handleOwnerApprovalAction(event) {
   const button = event.target.closest("button[data-user-action]");
-  if (!button || !isOwnerUser(state.currentUser)) return;
+  if (!button || !isOwnerUser(state.currentProfile)) return;
 
   const userId = button.dataset.userId;
   const action = button.dataset.userAction;
-  const users = loadUsers();
+  const profile = state.userProfiles.find((item) => item.id === userId);
+  if (!profile) return;
 
   if (action === "delete-user") {
-    const user = users.find((item) => item.id === userId && !isOwnerUser(item));
-    if (!user) return;
-
-    const ok = confirm(`Delete account ${user.name || user.email}?`);
+    const ok = confirm(`Delete account ${profile.name || profile.email}?`);
     if (!ok) return;
 
-    saveUsers(users.filter((item) => item.id !== userId));
+    try {
+      await apiFetch(`/users/${encodeURIComponent(userId)}`, {
+        method: "DELETE"
+      });
+    } catch (error) {
+      showToast(error.message);
+      return;
+    }
+
+    await loadUserProfiles();
     renderOwnerApprovalPanel();
     showToast("Akaun user dipadam.");
     return;
   }
 
-  const updatedUsers = users.map((user) => {
-    if (user.id !== userId || isOwnerUser(user)) return user;
+  const statusByAction = {
+    "approve-user": "approved",
+    "reject-user": "rejected"
+  };
+  const status = statusByAction[action];
+  if (!status) return;
 
-    if (action === "approve-user") {
-      return {
-        ...user,
-        approvalStatus: "approved",
-        approvedAt: new Date().toISOString(),
-        rejectedAt: ""
-      };
-    }
+  try {
+    await apiFetch(`/users/${encodeURIComponent(userId)}/access`, {
+      method: "PATCH",
+      body: {
+        status
+      }
+    });
+  } catch (error) {
+    showToast(error.message);
+    return;
+  }
 
-    if (action === "reject-user") {
-      return {
-        ...user,
-        approvalStatus: "rejected",
-        rejectedAt: new Date().toISOString(),
-        approvedAt: ""
-      };
-    }
-
-    return user;
-  });
-
-  saveUsers(updatedUsers);
+  await loadUserProfiles();
   renderOwnerApprovalPanel();
-  showToast(action === "approve-user" ? "User diluluskan." : "User ditolak.");
+  showToast(status === "approved" ? "User diluluskan." : status === "rejected" ? "User ditolak." : "Akaun user dipadam.");
 }
 
 function renderOwnerApprovalPanel() {
-  const isOwner = isOwnerUser(state.currentUser);
+  const isOwner = isOwnerUser(state.currentProfile);
   elements.ownerApprovalMenu.hidden = !isOwner;
 
   if (!isOwner) {
@@ -562,13 +494,12 @@ function renderOwnerApprovalPanel() {
     return;
   }
 
-  const users = loadUsers().filter((user) => !isOwnerUser(user));
-  const pendingCount = users.filter((user) => getApprovalStatus(user) === "pending").length;
+  const pendingCount = state.userProfiles.filter((user) => getApprovalStatus(user) === "pending").length;
   elements.ownerPendingCount.textContent = String(pendingCount);
   elements.ownerApprovalPanel.hidden = !state.ownerApprovalOpen;
   elements.ownerApprovalMenuButton.setAttribute("aria-expanded", String(state.ownerApprovalOpen));
-  elements.ownerUsersEmpty.hidden = users.length > 0;
-  elements.ownerUsersList.innerHTML = users.length ? users.map(toOwnerUserRowHtml).join("") : "";
+  elements.ownerUsersEmpty.hidden = state.userProfiles.length > 0;
+  elements.ownerUsersList.innerHTML = state.userProfiles.length ? state.userProfiles.map(toOwnerUserRowHtml).join("") : "";
 }
 
 function toOwnerUserRowHtml(user) {
@@ -576,6 +507,7 @@ function toOwnerUserRowHtml(user) {
   const statusLabel = getApprovalStatusLabel(status);
   const canApprove = status !== "approved";
   const canReject = status !== "rejected";
+  const canDelete = status !== "deleted";
 
   return `
     <div class="owner-user-row">
@@ -583,11 +515,11 @@ function toOwnerUserRowHtml(user) {
         <strong>${escapeHtml(user.name || "User")}</strong>
         <span>${escapeHtml(user.email || "")}</span>
       </div>
-  <span class="approval-badge approval-${status}">${statusLabel}</span>
+      <span class="approval-badge approval-${status}">${statusLabel}</span>
       <div class="owner-user-actions">
         <button class="ghost-button small-button" type="button" data-user-action="approve-user" data-user-id="${escapeAttribute(user.id)}"${canApprove ? "" : " disabled"}>Luluskan</button>
         <button class="ghost-button small-button" type="button" data-user-action="reject-user" data-user-id="${escapeAttribute(user.id)}"${canReject ? "" : " disabled"}>Tolak</button>
-        <button class="ghost-button small-button danger-button" type="button" data-user-action="delete-user" data-user-id="${escapeAttribute(user.id)}">Delete</button>
+        <button class="ghost-button small-button danger-button" type="button" data-user-action="delete-user" data-user-id="${escapeAttribute(user.id)}"${canDelete ? "" : " disabled"}>Delete</button>
       </div>
     </div>
   `;
@@ -616,7 +548,7 @@ function getRandomInt(min, max) {
   return Math.floor(Math.random() * (max - min + 1)) + min;
 }
 
-function handleSubmit(event) {
+async function handleSubmit(event) {
   event.preventDefault();
   elements.formAlert.textContent = "";
 
@@ -628,16 +560,30 @@ function handleSubmit(event) {
   }
 
   if (booking.id) {
-    state.bookings = state.bookings.map((item) => (item.id === booking.id ? booking : item));
+    try {
+      await apiFetch(`/bookings/${encodeURIComponent(booking.id)}`, {
+        method: "PUT",
+        body: toBookingPayload(booking)
+      });
+    } catch (error) {
+      elements.formAlert.textContent = error.message;
+      return;
+    }
     showToast("Booking dikemaskini.");
   } else {
-    booking.id = createId();
-    booking.createdAt = new Date().toISOString();
-    state.bookings.push(booking);
+    try {
+      await apiFetch("/bookings", {
+        method: "POST",
+        body: toBookingPayload(booking)
+      });
+    } catch (error) {
+      elements.formAlert.textContent = error.message;
+      return;
+    }
     showToast("Booking disimpan.");
   }
 
-  saveBookings();
+  await loadBookingsFromApi();
   resetForm();
   render();
 }
@@ -657,8 +603,7 @@ function readForm() {
     rooms: readRooms(),
     pax: readPax(),
     status: elements.status.value,
-    notes: elements.notes.value.trim(),
-    createdAt: getExistingCreatedAt(elements.bookingId.value)
+    notes: elements.notes.value.trim()
   };
 }
 
@@ -687,15 +632,23 @@ function editBooking(booking) {
   window.scrollTo({ top: 0, behavior: "smooth" });
 }
 
-function deleteBooking(id) {
+async function deleteBooking(id) {
   const booking = state.bookings.find((item) => item.id === id);
   if (!booking) return;
 
   const ok = confirm(`Padam booking ${booking.customerName}?`);
   if (!ok) return;
 
-  state.bookings = state.bookings.filter((item) => item.id !== id);
-  saveBookings();
+  try {
+    await apiFetch(`/bookings/${encodeURIComponent(id)}`, {
+      method: "DELETE"
+    });
+  } catch (error) {
+    showToast(error.message);
+    return;
+  }
+
+  await loadBookingsFromApi();
   render();
   showToast("Booking dipadam.");
 }
@@ -899,9 +852,7 @@ function renderSummary() {
   const upcoming = activeBookings.filter((booking) => getPrimaryDate(booking) >= today);
 
   elements.totalCount.textContent = state.bookings.length;
-  elements.todayCount.textContent = state.bookings.filter((booking) => {
-    return isDateWithinTrip(today, booking);
-  }).length;
+  elements.todayCount.textContent = state.bookings.filter((booking) => isDateWithinTrip(today, booking)).length;
   elements.upcomingCount.textContent = upcoming.length;
 }
 
@@ -942,11 +893,7 @@ function getFilteredBookings() {
 
       return matchesSearch && matchesStatus;
     })
-    .sort((a, b) => {
-      const dateA = getPrimaryDate(a);
-      const dateB = getPrimaryDate(b);
-      return dateA.localeCompare(dateB);
-    });
+    .sort((a, b) => getPrimaryDate(a).localeCompare(getPrimaryDate(b)));
 }
 
 function toRowHtml(booking) {
@@ -959,10 +906,8 @@ function toRowHtml(booking) {
   const tripEndDate = getTripEndDate(booking);
   const packageLocation = booking.packageLocation || "Tiada lokasi";
   const hotelName = booking.hotelName || "Tiada hotel";
-  const hotelAddress = booking.hotelAddress || "";
-  const hotelPhone = booking.hotelPhone || "";
-  const hotelAddressHtml = hotelAddress ? `<span>Alamat: ${escapeHtml(hotelAddress)}</span>` : "";
-  const hotelPhoneHtml = hotelPhone ? `<span>Tel: ${escapeHtml(hotelPhone)}</span>` : "";
+  const hotelAddressHtml = booking.hotelAddress ? `<span>Alamat: ${escapeHtml(booking.hotelAddress)}</span>` : "";
+  const hotelPhoneHtml = booking.hotelPhone ? `<span>Tel: ${escapeHtml(booking.hotelPhone)}</span>` : "";
   const rooms = getRooms(booking);
   const roomsHtml = rooms.length
     ? rooms
@@ -1042,6 +987,81 @@ function updateEmptyState() {
   elements.emptyText.textContent = hasFilters
     ? "Ubah carian atau tapisan untuk lihat rekod lain."
     : "Rekod pertama akan muncul di sini selepas disimpan.";
+}
+
+async function loadBookingsFromApi() {
+  try {
+    const data = await apiFetch("/bookings");
+    state.bookings = (data.bookings || []).map(mapBookingRow);
+  } catch (error) {
+    showToast(error.message);
+    state.bookings = [];
+  }
+}
+
+async function loadUserProfiles() {
+  if (!isOwnerUser(state.currentProfile)) {
+    state.userProfiles = [];
+    return;
+  }
+
+  try {
+    const data = await apiFetch("/users");
+    state.userProfiles = (data.users || []).map(mapProfileRow);
+  } catch (error) {
+    showToast(error.message);
+    state.userProfiles = [];
+  }
+}
+
+function mapBookingRow(row) {
+  return {
+    id: row.id,
+    customerName: row.customerName || row.customer_name || "",
+    phone: row.phone || "",
+    tripStartDate: row.tripStartDate || row.trip_start_date || "",
+    tripEndDate: row.tripEndDate || row.trip_end_date || row.tripStartDate || row.trip_start_date || "",
+    tripType: row.tripType || row.trip_type || "Private",
+    packageLocation: row.packageLocation || row.package_location || "",
+    hotelName: row.hotelName || row.hotel_name || "",
+    hotelAddress: row.hotelAddress || row.hotel_address || "",
+    hotelPhone: row.hotelPhone || row.hotel_phone || "",
+    rooms: Array.isArray(row.rooms) ? row.rooms : [],
+    pax: Array.isArray(row.pax) ? row.pax : [],
+    status: row.status || "Baru",
+    notes: row.notes || "",
+    createdAt: row.createdAt || row.created_at || "",
+    createdBy: row.createdBy || row.created_by || ""
+  };
+}
+
+function toBookingPayload(booking) {
+  return {
+    customerName: booking.customerName,
+    phone: booking.phone,
+    tripStartDate: booking.tripStartDate,
+    tripEndDate: booking.tripEndDate,
+    tripType: booking.tripType,
+    packageLocation: booking.packageLocation,
+    hotelName: booking.hotelName,
+    hotelAddress: booking.hotelAddress,
+    hotelPhone: booking.hotelPhone,
+    rooms: booking.rooms,
+    pax: booking.pax,
+    status: booking.status,
+    notes: booking.notes
+  };
+}
+
+function mapProfileRow(row) {
+  return {
+    id: row.id,
+    name: row.name || row.full_name || row.email || "User",
+    email: row.email || "",
+    role: row.role || "user",
+    approvalStatus: row.approvalStatus || row.approval_status || "pending",
+    createdAt: row.createdAt || row.created_at || ""
+  };
 }
 
 function exportPdf() {
@@ -1217,166 +1237,74 @@ function escapePdfText(value) {
   return sanitizePdfText(value).replaceAll("\\", "\\\\").replaceAll("(", "\\(").replaceAll(")", "\\)");
 }
 
-function saveUserAccount(user) {
-  if (isOwnerUser(user)) {
-    saveOwnerAccount(user);
-    return;
-  }
-
-  const users = loadUsers().map((item) => (item.id === user.id ? user : item));
-  saveUsers(users);
+function createApiClient() {
+  const config = globalThis.BOOKING_BACKEND_CONFIG || {};
+  const apiBaseUrl = String(config.apiBaseUrl || "").replace(/\/+$/, "");
+  if (!apiBaseUrl || apiBaseUrl.includes("YOUR_")) return null;
+  return { apiBaseUrl };
 }
 
-function saveOwnerAccount(user) {
-  const ownerSettings = {
-    name: user.name || OWNER_ACCOUNT.name,
-    email: user.email || OWNER_ACCOUNT.email,
-    passwordHash: user.passwordHash || OWNER_ACCOUNT.passwordHash,
-    passwordFallbackHash: user.passwordFallbackHash || OWNER_ACCOUNT.passwordFallbackHash,
-    updatedAt: user.updatedAt || new Date().toISOString()
+async function apiFetch(path, options = {}) {
+  const headers = {
+    "Content-Type": "application/json"
   };
-  localStorage.setItem(AUTH_OWNER_SETTINGS_KEY, JSON.stringify(ownerSettings));
-}
+  const token = getAuthToken();
 
-function saveUsers(users) {
-  const regularUsers = users.filter((user) => !isOwnerUser(user));
-  localStorage.setItem(AUTH_USERS_KEY, JSON.stringify(regularUsers));
-}
-
-function getOwnerAccount() {
-  const raw = localStorage.getItem(AUTH_OWNER_SETTINGS_KEY);
-  if (!raw) return OWNER_ACCOUNT;
-
-  try {
-    const settings = JSON.parse(raw);
-    if (
-      OLD_OWNER_DEFAULT_HASHES.includes(settings.passwordHash) ||
-      OLD_OWNER_DEFAULT_HASHES.includes(settings.passwordFallbackHash)
-    ) {
-      settings.passwordHash = OWNER_ACCOUNT.passwordHash;
-      settings.passwordFallbackHash = OWNER_ACCOUNT.passwordFallbackHash;
-      localStorage.setItem(AUTH_OWNER_SETTINGS_KEY, JSON.stringify(settings));
-    }
-
-    return {
-      ...OWNER_ACCOUNT,
-      ...settings,
-      id: OWNER_ACCOUNT.id,
-      role: OWNER_ACCOUNT.role
-    };
-  } catch {
-    return OWNER_ACCOUNT;
+  if (token && !options.skipAuth) {
+    headers.Authorization = `Bearer ${token}`;
   }
-}
 
-function loadUsers() {
-  const raw = localStorage.getItem(AUTH_USERS_KEY);
-  const ownerAccount = getOwnerAccount();
-  if (!raw) return [ownerAccount];
+  const response = await fetch(`${apiClient.apiBaseUrl}${path}`, {
+    method: options.method || "GET",
+    headers,
+    body: options.body ? JSON.stringify(options.body) : undefined
+  });
 
-  try {
-    const parsed = JSON.parse(raw);
-    const regularUsers = Array.isArray(parsed) ? parsed.filter((user) => !isOwnerUser(user)) : [];
-    return [ownerAccount, ...regularUsers];
-  } catch {
-    return [ownerAccount];
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(data.message || "Permintaan gagal. Cuba semula.");
   }
+
+  return data;
 }
 
-function getStoredUserById(id) {
-  return loadUsers().find((user) => user.id === id) || null;
+function getAuthToken() {
+  return sessionStorage.getItem(AUTH_TOKEN_KEY) || "";
 }
 
-function isEmailUsedByAnotherAccount(email, currentUserId) {
-  return loadUsers().some((user) => user.id !== currentUserId && normalizeEmail(user.email) === email);
+function setAuthToken(token) {
+  sessionStorage.setItem(AUTH_TOKEN_KEY, token);
 }
 
-function loadCurrentUser() {
-  const currentUserId = localStorage.getItem(AUTH_SESSION_KEY);
-  if (!currentUserId) return null;
-  const user = loadUsers().find((item) => item.id === currentUserId) || null;
-  if (user && isUserApproved(user)) return user;
-  localStorage.removeItem(AUTH_SESSION_KEY);
-  return null;
+function clearAuthToken() {
+  sessionStorage.removeItem(AUTH_TOKEN_KEY);
 }
 
-function isOwnerUser(user) {
-  return user?.id === OWNER_ACCOUNT.id || user?.role === "owner";
+function isOwnerUser(profile) {
+  return profile?.role === "owner";
 }
 
-function isUserApproved(user) {
-  return isOwnerUser(user) || getApprovalStatus(user) === "approved";
+function isUserApproved(profile) {
+  return isOwnerUser(profile) || getApprovalStatus(profile) === "approved";
 }
 
-function getApprovalStatus(user) {
-  if (isOwnerUser(user)) return "approved";
-  return user?.approvalStatus || "approved";
+function getApprovalStatus(profile) {
+  return profile?.approvalStatus || "pending";
 }
 
 function getApprovalStatusLabel(status) {
   if (status === "pending") return "Menunggu";
   if (status === "rejected") return "Ditolak";
+  if (status === "deleted") return "Deleted";
   return "Diluluskan";
 }
 
-async function doesPasswordMatch(user, password) {
-  const passwordHash = await hashPassword(password);
-  const passwordLocalHash = hashPasswordLocal(password);
-  return (
-    user.passwordHash === passwordHash ||
-    user.passwordHash === passwordLocalHash ||
-    user.passwordFallbackHash === passwordHash ||
-    user.passwordFallbackHash === passwordLocalHash ||
-    user.password === password
-  );
-}
-
-function formatUserLabel(user) {
-  return isOwnerUser(user) ? `${user.name || "Owner"} (Owner)` : user.name;
+function formatUserLabel(profile) {
+  return isOwnerUser(profile) ? `${profile.name || "Owner"} (Owner)` : profile.name;
 }
 
 function normalizeEmail(value) {
   return String(value || "").trim().toLowerCase();
-}
-
-async function hashPassword(password) {
-  if (globalThis.crypto?.subtle && globalThis.TextEncoder) {
-    const data = new TextEncoder().encode(password);
-    const digest = await crypto.subtle.digest("SHA-256", data);
-    return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
-  }
-
-  return hashPasswordLocal(password);
-}
-
-function hashPasswordLocal(password) {
-  let hash = 0;
-  for (let index = 0; index < password.length; index += 1) {
-    hash = (hash << 5) - hash + password.charCodeAt(index);
-    hash |= 0;
-  }
-  return `local-${Math.abs(hash)}`;
-}
-
-function saveBookings() {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state.bookings));
-}
-
-function loadBookings() {
-  const raw = localStorage.getItem(STORAGE_KEY);
-  if (!raw) return bookingsSeed;
-
-  try {
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : bookingsSeed;
-  } catch {
-    return bookingsSeed;
-  }
-}
-
-function getExistingCreatedAt(id) {
-  const existing = state.bookings.find((item) => item.id === id);
-  return existing?.createdAt || new Date().toISOString();
 }
 
 function getRooms(booking) {
@@ -1386,16 +1314,6 @@ function getRooms(booking) {
       count: normalizeRoomCount(room.count)
     }));
   }
-
-  if (booking.roomType || booking.roomCount) {
-    return [
-      {
-        type: String(booking.roomType || "").trim(),
-        count: normalizeRoomCount(booking.roomCount)
-      }
-    ];
-  }
-
   return [];
 }
 
@@ -1429,16 +1347,6 @@ function getPax(booking) {
       count: normalizePaxCount(pax.count)
     }));
   }
-
-  if (booking.paxType || booking.paxCount) {
-    return [
-      {
-        type: String(booking.paxType || "").trim(),
-        count: normalizePaxCount(booking.paxCount)
-      }
-    ];
-  }
-
   return [];
 }
 
@@ -1446,13 +1354,6 @@ function formatPaxForSearch(booking) {
   return getPax(booking)
     .map((pax) => `${pax.type} ${pax.count}`)
     .join(" ");
-}
-
-function formatPaxForDisplay(booking) {
-  return getPax(booking)
-    .filter((pax) => pax.type)
-    .map((pax) => `${pax.type} | ${pax.count} pax`)
-    .join("; ");
 }
 
 function formatPaxForExport(booking) {
@@ -1567,11 +1468,11 @@ function getMonthGroupLabel(booking) {
 }
 
 function getTripStartDate(booking) {
-  return booking.tripStartDate || booking.tripDate || booking.bookingDate || "";
+  return booking.tripStartDate || "";
 }
 
 function getTripEndDate(booking) {
-  return booking.tripEndDate || booking.tripDate || booking.tripStartDate || booking.bookingDate || "";
+  return booking.tripEndDate || booking.tripStartDate || "";
 }
 
 function isDateWithinTrip(date, booking) {
@@ -1579,11 +1480,6 @@ function isDateWithinTrip(date, booking) {
   const endDate = getTripEndDate(booking) || startDate;
   if (!startDate) return false;
   return date >= startDate && date <= endDate;
-}
-
-function createId() {
-  if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
-  return `booking-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
 function showToast(message) {

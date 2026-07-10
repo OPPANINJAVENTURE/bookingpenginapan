@@ -132,14 +132,6 @@ textarea:focus-visible {
   width: auto;
 }
 
-.owner-code-login {
-  display: grid;
-  gap: 13px;
-  margin-top: 6px;
-  padding-top: 16px;
-  border-top: 1px solid var(--line);
-}
-
 .auth-alert {
   margin: 14px 0 0;
 }
