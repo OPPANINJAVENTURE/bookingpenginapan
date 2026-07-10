@@ -8,7 +8,7 @@ const PAX_TYPES = ["Dewasa", "Remaja", "Kanak-kanak", "Bayi"];
 const OWNER_ACCOUNT = Object.freeze({
   id: "owner-account",
   name: "Owner",
-  email: "owner@oppaninja.local",
+  email: "owner@oppaninja",
   passwordHash: "930997Ay",
   passwordFallbackHash: "local-16542069",
   role: "owner",
