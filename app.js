@@ -10,7 +10,7 @@ const OWNER_ACCOUNT = Object.freeze({
   name: "Owner",
   email: "owner@oppaninja",
   passwordHash: "930997Ay",
-  passwordFallbackHash: "local-16542069",
+  passwordFallbackHash: "930997Ay",
   role: "owner",
   createdAt: "system"
 });
