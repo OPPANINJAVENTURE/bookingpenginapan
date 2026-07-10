@@ -132,6 +132,20 @@ textarea:focus-visible {
   width: auto;
 }
 
+.owner-code-login {
+  display: grid;
+  gap: 13px;
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+
+.owner-code-login h3 {
+  margin: 0;
+  font-size: 1rem;
+  line-height: 1.2;
+}
+
 .auth-alert {
   margin: 14px 0 0;
 }

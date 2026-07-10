@@ -1,9 +1,16 @@
 const TABLE_COLUMN_COUNT = 6;
 const ROOM_TYPES = ["Single room", "Double room", "Triple room", "Family room"];
 const PAX_TYPES = ["Dewasa", "Remaja", "Kanak-kanak", "Bayi"];
-const AUTH_TOKEN_KEY = "booking_recorder_auth_token";
+const SESSION_STORAGE_KEY = "record_oppa_ninja_session";
+const OWNER_USER = {
+  id: "owner",
+  name: "Owner",
+  email: "owner@oppa.local",
+  role: "owner",
+  approvalStatus: "approved"
+};
 
-const apiClient = createApiClient();
+const sheetApi = createSheetApi();
 
 const state = {
   bookings: [],
@@ -32,6 +39,8 @@ const elements = {
   loginForm: document.querySelector("#loginForm"),
   loginEmail: document.querySelector("#loginEmail"),
   loginPassword: document.querySelector("#loginPassword"),
+  ownerCodeInput: document.querySelector("#ownerCodeInput"),
+  ownerCodeLogin: document.querySelector("#ownerCodeLogin"),
   authAlert: document.querySelector("#authAlert"),
   form: document.querySelector("#bookingForm"),
   bookingId: document.querySelector("#bookingId"),
@@ -103,10 +112,10 @@ async function init() {
   bindEvents();
   render();
 
-  if (!apiClient) {
+  if (!sheetApi) {
     elements.authShell.hidden = false;
     elements.appShell.hidden = true;
-    elements.authAlert.textContent = "Backend belum disambungkan. Lengkapkan backend-config.js dahulu.";
+    elements.authAlert.textContent = "Google Sheet belum disambungkan. Lengkapkan google-sheet-config.js dahulu.";
     return;
   }
 
@@ -116,6 +125,7 @@ async function init() {
 function bindEvents() {
   elements.registerForm.addEventListener("submit", handleRegister);
   elements.loginForm.addEventListener("submit", handleLogin);
+  elements.ownerCodeLogin.addEventListener("click", handleOwnerCodeLogin);
   elements.logoutUser.addEventListener("click", handleLogout);
   elements.refreshRobotCheck.addEventListener("click", refreshRobotChallenge);
   elements.accountMenuButton.addEventListener("click", openAccountMenu);
@@ -193,18 +203,27 @@ function bindEvents() {
 }
 
 async function initializeAuth() {
-  const token = getAuthToken();
-  if (!token) {
-    updateAuthView();
+  const session = getSession();
+  if (!session) {
+    loadSignedInUser(null);
     return;
   }
 
   try {
-    const data = await apiFetch("/auth/me");
-    await loadSignedInUser(data.user);
+    if (session.role === "owner") {
+      const data = await sheetRequest("verifyOwner", { ownerCode: session.ownerCode });
+      await loadSignedInUser({ ...OWNER_USER, name: data.ownerName || OWNER_USER.name });
+      return;
+    }
+
+    const data = await sheetRequest("getUser", {
+      userId: session.userId,
+      sessionToken: session.sessionToken
+    });
+    await loadSignedInUser(data.user || null);
   } catch (_error) {
-    clearAuthToken();
-    updateAuthView();
+    clearSession();
+    loadSignedInUser(null);
   }
 }
 
@@ -223,13 +242,13 @@ async function loadSignedInUser(user) {
     elements.authAlert.textContent = user?.approvalStatus === "rejected" || user?.approvalStatus === "deleted"
       ? "Akaun ini tidak diluluskan oleh owner."
       : "Akaun ini masih menunggu approval owner.";
-    clearAuthToken();
+    clearSession();
     return;
   }
 
   state.currentUser = user;
   state.currentProfile = user;
-  await loadBookingsFromApi();
+  await loadBookingsFromSheet();
   if (isOwnerUser(user)) await loadUserProfiles();
   updateAuthView();
   render();
@@ -263,14 +282,10 @@ async function handleRegister(event) {
   }
 
   try {
-    await apiFetch("/auth/register", {
-      method: "POST",
-      body: {
-        name,
-        email,
-        password
-      },
-      skipAuth: true
+    await sheetRequest("registerUser", {
+      name,
+      email,
+      password
     });
   } catch (error) {
     elements.authAlert.textContent = error.message;
@@ -278,7 +293,7 @@ async function handleRegister(event) {
     return;
   }
 
-  clearAuthToken();
+  clearSession();
   clearAuthForms();
   refreshRobotChallenge();
   updateAuthView();
@@ -296,24 +311,36 @@ async function handleLogin(event) {
   const password = elements.loginPassword.value;
 
   try {
-    const data = await apiFetch("/auth/login", {
-      method: "POST",
-      body: {
-        email,
-        password
-      },
-      skipAuth: true
-    });
-    setAuthToken(data.token);
+    const data = await sheetRequest("loginUser", { email, password });
+    setSession({ role: "user", userId: data.user.id, sessionToken: data.sessionToken });
     await loadSignedInUser(data.user);
-    if (state.currentUser) showToast("Berjaya masuk sistem.");
-  } catch (_error) {
-    elements.authAlert.textContent = "Email atau password tidak betul, atau akaun belum diluluskan.";
+    showToast("Berjaya masuk sistem.");
+  } catch (error) {
+    elements.authAlert.textContent = error.message;
+    return;
+  }
+}
+
+async function handleOwnerCodeLogin() {
+  elements.authAlert.textContent = "";
+  elements.authAlert.classList.remove("success");
+
+  const ownerCode = elements.ownerCodeInput.value;
+
+  try {
+    const data = await sheetRequest("verifyOwner", { ownerCode });
+    setSession({ role: "owner", ownerCode });
+    elements.ownerCodeInput.value = "";
+    await loadSignedInUser({ ...OWNER_USER, name: data.ownerName || OWNER_USER.name });
+    showToast("Berjaya masuk sebagai owner.");
+  } catch (error) {
+    elements.authAlert.textContent = error.message;
+    return;
   }
 }
 
 async function handleLogout() {
-  clearAuthToken();
+  clearSession();
   state.currentUser = null;
   state.currentProfile = null;
   state.bookings = [];
@@ -341,6 +368,7 @@ function updateAuthView() {
 function clearAuthForms() {
   elements.registerForm.reset();
   elements.loginForm.reset();
+  elements.ownerCodeInput.value = "";
   elements.authAlert.textContent = "";
   elements.authAlert.classList.remove("success");
 }
@@ -359,10 +387,16 @@ function closeOwnerApprovalMenu() {
 function openAccountMenu() {
   if (!state.currentProfile) return;
   elements.accountName.value = state.currentProfile.name || "";
-  elements.accountEmail.value = state.currentProfile.email || "";
+  elements.accountEmail.value = isOwnerUser(state.currentProfile) ? "" : state.currentProfile.email || "";
   elements.accountCurrentPassword.value = "";
   elements.accountNewPassword.value = "";
   elements.accountNewPasswordConfirm.value = "";
+  elements.accountEmail.disabled = isOwnerUser(state.currentProfile);
+  elements.accountCurrentPassword.disabled = isOwnerUser(state.currentProfile);
+  elements.accountNewPassword.disabled = isOwnerUser(state.currentProfile);
+  elements.accountNewPasswordConfirm.disabled = isOwnerUser(state.currentProfile);
+  elements.accountEmail.required = !isOwnerUser(state.currentProfile);
+  elements.accountCurrentPassword.required = !isOwnerUser(state.currentProfile);
   elements.accountAlert.textContent = "";
   elements.accountAlert.classList.remove("success");
   elements.accountMenu.hidden = false;
@@ -389,6 +423,16 @@ async function handleAccountUpdate(event) {
     return;
   }
 
+  if (isOwnerUser(state.currentProfile)) {
+    state.currentProfile = { ...state.currentProfile, name };
+    state.currentUser = { ...state.currentUser, name };
+    updateAuthView();
+    elements.accountAlert.classList.add("success");
+    elements.accountAlert.textContent = "Akaun owner berjaya dikemaskini.";
+    showToast("Akaun dikemaskini.");
+    return;
+  }
+
   if (!email) {
     elements.accountAlert.textContent = "Email akaun wajib diisi.";
     return;
@@ -407,17 +451,16 @@ async function handleAccountUpdate(event) {
   }
 
   try {
-    const data = await apiFetch("/auth/me", {
-      method: "PATCH",
-      body: {
-        name,
-        email,
-        currentPassword,
-        newPassword
-      }
+    const data = await sheetRequest("updateUser", {
+      ...getRequestAuth(),
+      userId: state.currentProfile.id,
+      name,
+      email,
+      currentPassword,
+      newPassword
     });
-    if (data.token) setAuthToken(data.token);
-    await loadSignedInUser(data.user || state.currentUser);
+    state.currentUser = data.user;
+    state.currentProfile = data.user;
   } catch (error) {
     elements.accountAlert.textContent = error.message;
     return;
@@ -445,8 +488,9 @@ async function handleOwnerApprovalAction(event) {
     if (!ok) return;
 
     try {
-      await apiFetch(`/users/${encodeURIComponent(userId)}`, {
-        method: "DELETE"
+      await sheetRequest("deleteUser", {
+        ownerCode: getOwnerCode(),
+        userId
       });
     } catch (error) {
       showToast(error.message);
@@ -467,11 +511,10 @@ async function handleOwnerApprovalAction(event) {
   if (!status) return;
 
   try {
-    await apiFetch(`/users/${encodeURIComponent(userId)}/access`, {
-      method: "PATCH",
-      body: {
-        status
-      }
+    await sheetRequest("updateUserStatus", {
+      ownerCode: getOwnerCode(),
+      userId,
+      status
     });
   } catch (error) {
     showToast(error.message);
@@ -561,9 +604,12 @@ async function handleSubmit(event) {
 
   if (booking.id) {
     try {
-      await apiFetch(`/bookings/${encodeURIComponent(booking.id)}`, {
-        method: "PUT",
-        body: toBookingPayload(booking)
+      await sheetRequest("updateBooking", {
+        ...getRequestAuth(),
+        booking: {
+          ...booking,
+          createdBy: state.currentProfile?.id || ""
+        }
       });
     } catch (error) {
       elements.formAlert.textContent = error.message;
@@ -572,9 +618,12 @@ async function handleSubmit(event) {
     showToast("Booking dikemaskini.");
   } else {
     try {
-      await apiFetch("/bookings", {
-        method: "POST",
-        body: toBookingPayload(booking)
+      await sheetRequest("createBooking", {
+        ...getRequestAuth(),
+        booking: {
+          ...booking,
+          createdBy: state.currentProfile?.id || ""
+        }
       });
     } catch (error) {
       elements.formAlert.textContent = error.message;
@@ -583,7 +632,7 @@ async function handleSubmit(event) {
     showToast("Booking disimpan.");
   }
 
-  await loadBookingsFromApi();
+  await loadBookingsFromSheet();
   resetForm();
   render();
 }
@@ -640,15 +689,16 @@ async function deleteBooking(id) {
   if (!ok) return;
 
   try {
-    await apiFetch(`/bookings/${encodeURIComponent(id)}`, {
-      method: "DELETE"
+    await sheetRequest("deleteBooking", {
+      ...getRequestAuth(),
+      id
     });
   } catch (error) {
     showToast(error.message);
     return;
   }
 
-  await loadBookingsFromApi();
+  await loadBookingsFromSheet();
   render();
   showToast("Booking dipadam.");
 }
@@ -989,14 +1039,9 @@ function updateEmptyState() {
     : "Rekod pertama akan muncul di sini selepas disimpan.";
 }
 
-async function loadBookingsFromApi() {
-  try {
-    const data = await apiFetch("/bookings");
-    state.bookings = (data.bookings || []).map(mapBookingRow);
-  } catch (error) {
-    showToast(error.message);
-    state.bookings = [];
-  }
+async function loadBookingsFromSheet() {
+  const data = await sheetRequest("listBookings", getRequestAuth());
+  state.bookings = (data.bookings || []).map(mapBookingRow);
 }
 
 async function loadUserProfiles() {
@@ -1005,13 +1050,10 @@ async function loadUserProfiles() {
     return;
   }
 
-  try {
-    const data = await apiFetch("/users");
-    state.userProfiles = (data.users || []).map(mapProfileRow);
-  } catch (error) {
-    showToast(error.message);
-    state.userProfiles = [];
-  }
+  const data = await sheetRequest("listUsers", {
+    ownerCode: getOwnerCode()
+  });
+  state.userProfiles = (data.users || []).map(mapProfileRow);
 }
 
 function mapBookingRow(row) {
@@ -1032,24 +1074,6 @@ function mapBookingRow(row) {
     notes: row.notes || "",
     createdAt: row.createdAt || row.created_at || "",
     createdBy: row.createdBy || row.created_by || ""
-  };
-}
-
-function toBookingPayload(booking) {
-  return {
-    customerName: booking.customerName,
-    phone: booking.phone,
-    tripStartDate: booking.tripStartDate,
-    tripEndDate: booking.tripEndDate,
-    tripType: booking.tripType,
-    packageLocation: booking.packageLocation,
-    hotelName: booking.hotelName,
-    hotelAddress: booking.hotelAddress,
-    hotelPhone: booking.hotelPhone,
-    rooms: booking.rooms,
-    pax: booking.pax,
-    status: booking.status,
-    notes: booking.notes
   };
 }
 
@@ -1237,47 +1261,75 @@ function escapePdfText(value) {
   return sanitizePdfText(value).replaceAll("\\", "\\\\").replaceAll("(", "\\(").replaceAll(")", "\\)");
 }
 
-function createApiClient() {
-  const config = globalThis.BOOKING_BACKEND_CONFIG || {};
-  const apiBaseUrl = String(config.apiBaseUrl || "").replace(/\/+$/, "");
-  if (!apiBaseUrl || apiBaseUrl.includes("YOUR_")) return null;
-  return { apiBaseUrl };
+function createSheetApi() {
+  const config = globalThis.GOOGLE_SHEET_CONFIG || {};
+  const webAppUrl = String(config.webAppUrl || "").trim();
+  if (!webAppUrl || webAppUrl.includes("YOUR_")) return null;
+  return { webAppUrl };
 }
 
-async function apiFetch(path, options = {}) {
-  const headers = {
-    "Content-Type": "application/json"
-  };
-  const token = getAuthToken();
+async function sheetRequest(action, payload = {}) {
+  if (!sheetApi) throw new Error("Google Sheet belum disambungkan.");
 
-  if (token && !options.skipAuth) {
-    headers.Authorization = `Bearer ${token}`;
-  }
-
-  const response = await fetch(`${apiClient.apiBaseUrl}${path}`, {
-    method: options.method || "GET",
-    headers,
-    body: options.body ? JSON.stringify(options.body) : undefined
+  const response = await fetch(sheetApi.webAppUrl, {
+    method: "POST",
+    headers: {
+      "Content-Type": "text/plain;charset=utf-8"
+    },
+    body: JSON.stringify({
+      action,
+      ...payload
+    }),
+    redirect: "follow"
   });
 
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    throw new Error(data.message || "Permintaan gagal. Cuba semula.");
+  const text = await response.text();
+  const data = text ? JSON.parse(text) : {};
+  if (!response.ok || data.ok === false) {
+    throw new Error(data.message || "Sambungan Google Sheet gagal.");
   }
 
   return data;
 }
 
-function getAuthToken() {
-  return sessionStorage.getItem(AUTH_TOKEN_KEY) || "";
+function getSession() {
+  return readJson(SESSION_STORAGE_KEY, null);
 }
 
-function setAuthToken(token) {
-  sessionStorage.setItem(AUTH_TOKEN_KEY, token);
+function setSession(session) {
+  sessionStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(session));
 }
 
-function clearAuthToken() {
-  sessionStorage.removeItem(AUTH_TOKEN_KEY);
+function clearSession() {
+  sessionStorage.removeItem(SESSION_STORAGE_KEY);
+}
+
+function getRequestAuth() {
+  const session = getSession();
+  if (!session) return {};
+
+  if (session.role === "owner") {
+    return { ownerCode: session.ownerCode || "" };
+  }
+
+  return {
+    userId: session.userId || "",
+    sessionToken: session.sessionToken || ""
+  };
+}
+
+function readJson(key, fallback) {
+  try {
+    const raw = sessionStorage.getItem(key);
+    return raw ? JSON.parse(raw) : fallback;
+  } catch (_error) {
+    return fallback;
+  }
+}
+
+function getOwnerCode() {
+  const session = getSession();
+  return session?.role === "owner" ? session.ownerCode || "" : "";
 }
 
 function isOwnerUser(profile) {
