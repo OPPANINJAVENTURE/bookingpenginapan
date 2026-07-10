@@ -8,12 +8,13 @@ const PAX_TYPES = ["Dewasa", "Remaja", "Kanak-kanak", "Bayi"];
 const OWNER_ACCOUNT = Object.freeze({
   id: "owner-account",
   name: "Owner",
-  email: "owner@oppaninja",
-  passwordHash: "930997Ay",
-  passwordFallbackHash: "930997Ay",
+  email: "owner@oppaninja.local",
+  passwordHash: "65d0e4e254d49749ccb10ec765e2894d9070aacd835fd53ff0477a3e79a6bfa7",
+  passwordFallbackHash: "local-2581785",
   role: "owner",
   createdAt: "system"
 });
+const OLD_OWNER_DEFAULT_HASHES = ["04aeeb2222dcd4c8026fc3ae138bf0d072a18bf9b832ad93fffdbe18140d973d", "local-16542069"];
 
 const bookingsSeed = [
   {
@@ -70,6 +71,8 @@ const elements = {
   loginForm: document.querySelector("#loginForm"),
   loginEmail: document.querySelector("#loginEmail"),
   loginPassword: document.querySelector("#loginPassword"),
+  ownerCode: document.querySelector("#ownerCode"),
+  ownerCodeLogin: document.querySelector("#ownerCodeLogin"),
   authAlert: document.querySelector("#authAlert"),
   form: document.querySelector("#bookingForm"),
   bookingId: document.querySelector("#bookingId"),
@@ -146,6 +149,12 @@ function init() {
 function bindEvents() {
   elements.registerForm.addEventListener("submit", handleRegister);
   elements.loginForm.addEventListener("submit", handleLogin);
+  elements.ownerCodeLogin.addEventListener("click", handleOwnerCodeLogin);
+  elements.ownerCode.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter") return;
+    event.preventDefault();
+    handleOwnerCodeLogin();
+  });
   elements.logoutUser.addEventListener("click", handleLogout);
   elements.refreshRobotCheck.addEventListener("click", refreshRobotChallenge);
   elements.accountMenuButton.addEventListener("click", openAccountMenu);
@@ -298,6 +307,7 @@ async function handleLogin(event) {
   const users = loadUsers();
   const user = users.find((item) => {
     return (
+      !isOwnerUser(item) &&
       item.email === email &&
       (item.passwordHash === passwordHash ||
         item.passwordHash === passwordLocalHash ||
@@ -331,6 +341,24 @@ async function handleLogin(event) {
   clearAuthForms();
   updateAuthView();
   showToast("Berjaya masuk sistem.");
+}
+
+async function handleOwnerCodeLogin() {
+  elements.authAlert.textContent = "";
+  elements.authAlert.classList.remove("success");
+
+  const code = elements.ownerCode.value;
+  const owner = loadUsers().find((user) => isOwnerUser(user));
+
+  if (!owner || !(await doesPasswordMatch(owner, code))) {
+    elements.authAlert.textContent = "Kod owner tidak betul.";
+    return;
+  }
+
+  setCurrentUser(owner);
+  clearAuthForms();
+  updateAuthView();
+  showToast("Owner berjaya masuk sistem.");
 }
 
 function handleLogout() {
@@ -367,6 +395,7 @@ function setCurrentUser(user) {
 function clearAuthForms() {
   elements.registerForm.reset();
   elements.loginForm.reset();
+  elements.ownerCode.value = "";
   elements.authAlert.textContent = "";
   elements.authAlert.classList.remove("success");
 }
@@ -1220,6 +1249,15 @@ function getOwnerAccount() {
 
   try {
     const settings = JSON.parse(raw);
+    if (
+      OLD_OWNER_DEFAULT_HASHES.includes(settings.passwordHash) ||
+      OLD_OWNER_DEFAULT_HASHES.includes(settings.passwordFallbackHash)
+    ) {
+      settings.passwordHash = OWNER_ACCOUNT.passwordHash;
+      settings.passwordFallbackHash = OWNER_ACCOUNT.passwordFallbackHash;
+      localStorage.setItem(AUTH_OWNER_SETTINGS_KEY, JSON.stringify(settings));
+    }
+
     return {
       ...OWNER_ACCOUNT,
       ...settings,
