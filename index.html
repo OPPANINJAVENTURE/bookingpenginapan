@@ -1,0 +1,350 @@
+<!doctype html>
+<html lang="ms-MY">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Record Oppa Ninja</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <section class="auth-shell" id="authShell" hidden>
+      <div class="auth-card">
+        <div class="auth-brand">
+          <div class="brand-mark">
+            <img class="brand-logo" src="assets/oppa-ninja-logo.png" alt="Oppa Ninja Travel" />
+          </div>
+          <div>
+            <p class="eyebrow">sistem rekod utama</p>
+            <h1>Record Oppa Ninja</h1>
+          </div>
+        </div>
+
+        <div class="auth-grid">
+          <form class="auth-form" id="registerForm" autocomplete="off">
+            <div>
+              <p class="eyebrow">Akaun baru</p>
+              <h2>Register pengguna</h2>
+            </div>
+
+            <label>
+              Nama pengguna
+              <input id="registerName" name="registerName" type="text" required />
+            </label>
+
+            <label>
+              Email
+              <input id="registerEmail" name="registerEmail" type="email" required />
+            </label>
+
+            <label>
+              Password
+              <input id="registerPassword" name="registerPassword" type="password" minlength="4" required />
+            </label>
+
+            <label>
+              Confirm password
+              <input id="registerPasswordConfirm" name="registerPasswordConfirm" type="password" minlength="4" required />
+            </label>
+
+            <div class="robot-check">
+              <div class="robot-check-heading">
+                <span>Semakan bukan robot</span>
+                <button class="ghost-button small-button" id="refreshRobotCheck" type="button">Tukar</button>
+              </div>
+              <label>
+                Jawapan untuk <strong id="registerChallengeQuestion"></strong>
+                <input id="registerChallengeAnswer" name="registerChallengeAnswer" type="text" inputmode="numeric" autocomplete="off" required />
+              </label>
+            </div>
+
+            <button class="primary-button" type="submit">Register</button>
+          </form>
+
+          <form class="auth-form" id="loginForm" autocomplete="off">
+            <div>
+              <p class="eyebrow">Masuk sistem</p>
+              <h2>Login</h2>
+            </div>
+
+            <label>
+              Email
+              <input id="loginEmail" name="loginEmail" type="email" required />
+            </label>
+
+            <label>
+              Password
+              <input id="loginPassword" name="loginPassword" type="password" required />
+            </label>
+
+            <button class="ghost-button" type="submit">Login</button>
+          </form>
+        </div>
+
+        <p class="form-alert auth-alert" id="authAlert" role="status"></p>
+      </div>
+    </section>
+
+    <div class="app-shell" id="appShell" hidden>
+      <header class="topbar">
+        <div class="brand-block">
+          <div class="brand-mark">
+            <img class="brand-logo" src="assets/oppa-ninja-logo.png" alt="Oppa Ninja Travel" />
+          </div>
+          <div>
+            <p class="eyebrow">sistem rekod utama</p>
+            <h1>Record Oppa Ninja</h1>
+          </div>
+        </div>
+        <div class="topbar-actions">
+          <span class="user-pill" id="currentUserName"></span>
+          <div class="menu-dropdown" id="ownerApprovalMenu" hidden>
+            <button class="ghost-button" id="ownerApprovalMenuButton" type="button" aria-expanded="false">
+              Approval
+              <span class="menu-count" id="ownerPendingCount">0</span>
+            </button>
+            <section class="owner-panel owner-dropdown-panel" id="ownerApprovalPanel" aria-label="Approval pengguna" hidden>
+              <div class="panel-heading">
+                <div>
+                  <p class="eyebrow">Owner</p>
+                  <h2>Approval pengguna</h2>
+                </div>
+              </div>
+
+              <div class="owner-users-list" id="ownerUsersList"></div>
+
+              <div class="empty-state owner-empty" id="ownerUsersEmpty" hidden>
+                <strong>Tiada user menunggu approval</strong>
+                <span>User baru akan muncul di sini selepas register.</span>
+              </div>
+            </section>
+          </div>
+          <button class="ghost-button" id="accountMenuButton" type="button">Akaun</button>
+          <button class="ghost-button" id="exportPdf" type="button">Export PDF</button>
+          <button class="ghost-button" id="logoutUser" type="button">Keluar</button>
+        </div>
+      </header>
+
+      <main class="workspace">
+        <section class="summary-grid" aria-label="Ringkasan booking">
+          <article class="summary-tile">
+            <span class="summary-label">Semua</span>
+            <strong id="totalCount">0</strong>
+          </article>
+          <article class="summary-tile">
+            <span class="summary-label">Hari ini</span>
+            <strong id="todayCount">0</strong>
+          </article>
+          <article class="summary-tile">
+            <span class="summary-label">Akan datang</span>
+            <strong id="upcomingCount">0</strong>
+          </article>
+        </section>
+
+        <section class="content-grid">
+          <aside class="editor-panel" aria-label="Borang booking">
+            <div class="editor-top-action">
+              <button class="primary-button" id="newBooking" type="button">Booking Baru</button>
+            </div>
+
+            <div class="panel-heading">
+              <div>
+                <p class="eyebrow">Maklumat</p>
+                <h2 id="formTitle">Booking baru</h2>
+              </div>
+              <span class="mode-pill" id="formMode">Baru</span>
+            </div>
+
+            <form id="bookingForm" autocomplete="off">
+              <input type="hidden" id="bookingId" />
+
+              <label>
+                Nama pelanggan
+                <input id="customerName" name="customerName" type="text" required />
+              </label>
+
+              <label>
+                Telefon
+                <input id="phone" name="phone" type="tel" required />
+              </label>
+
+              <div class="split-fields">
+                <label>
+                  Start trip
+                  <span class="date-field">
+                    <input id="tripStartDate" name="tripStartDate" type="text" inputmode="numeric" placeholder="dd-mm-yyyy" autocomplete="off" required />
+                    <input class="native-date-picker" id="tripStartDatePicker" type="date" tabindex="-1" aria-hidden="true" />
+                    <button class="icon-button date-picker-button" type="button" data-date-target="tripStartDate" aria-label="Pilih start trip">Cal</button>
+                  </span>
+                </label>
+                <label>
+                  End trip
+                  <span class="date-field">
+                    <input id="tripEndDate" name="tripEndDate" type="text" inputmode="numeric" placeholder="dd-mm-yyyy" autocomplete="off" required />
+                    <input class="native-date-picker" id="tripEndDatePicker" type="date" tabindex="-1" aria-hidden="true" />
+                    <button class="icon-button date-picker-button" type="button" data-date-target="tripEndDate" aria-label="Pilih end trip">Cal</button>
+                  </span>
+                </label>
+              </div>
+
+              <label>
+                Jenis trip
+                <select id="tripType" name="tripType">
+                  <option value="Private" selected>Private</option>
+                  <option value="Open Group">Open Group</option>
+                </select>
+              </label>
+
+              <label>
+                Lokasi pakej
+                <input id="packageLocation" name="packageLocation" type="text" required />
+              </label>
+
+              <label>
+                Nama hotel
+                <input id="hotelName" name="hotelName" type="text" required />
+              </label>
+
+              <label>
+                Alamat hotel
+                <textarea id="hotelAddress" name="hotelAddress" rows="3"></textarea>
+              </label>
+
+              <label>
+                No telefon hotel
+                <input id="hotelPhone" name="hotelPhone" type="tel" />
+              </label>
+
+              <div class="room-editor">
+                <div class="room-editor-heading">
+                  <span>Jenis bilik</span>
+                  <button class="ghost-button small-button" id="addRoom" type="button">Tambah bilik</button>
+                </div>
+                <div class="room-rows" id="roomRows"></div>
+              </div>
+
+              <div class="pax-editor">
+                <div class="pax-editor-heading">
+                  <span>Jumlah pax</span>
+                  <button class="ghost-button small-button" id="addPax" type="button">Tambah pax</button>
+                </div>
+                <div class="pax-rows" id="paxRows"></div>
+              </div>
+
+              <label>
+                Status
+                <select id="status" name="status">
+                  <option value="Baru">Baru</option>
+                  <option value="Disahkan">Disahkan</option>
+                  <option value="Selesai">Selesai</option>
+                  <option value="Batal">Batal</option>
+                </select>
+              </label>
+
+              <label>
+                Nota
+                <textarea id="notes" name="notes" rows="4"></textarea>
+              </label>
+
+              <p class="form-alert" id="formAlert" role="status"></p>
+
+              <div class="form-actions">
+                <button class="primary-button" type="submit">Simpan</button>
+                <button class="ghost-button" id="resetForm" type="button">Kosongkan</button>
+              </div>
+            </form>
+          </aside>
+
+          <section class="records-panel" aria-label="Senarai booking">
+            <div class="records-toolbar">
+              <div>
+                <p class="eyebrow">Senarai</p>
+                <h2>Booking</h2>
+              </div>
+              <div class="filters">
+                <input id="searchInput" type="search" placeholder="Cari nama, hotel, alamat, bilik, pax" aria-label="Cari booking" />
+                <select id="statusFilter" aria-label="Tapis status">
+                  <option value="all">Semua status</option>
+                  <option value="Baru">Baru</option>
+                  <option value="Disahkan">Disahkan</option>
+                  <option value="Selesai">Selesai</option>
+                  <option value="Batal">Batal</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Pelanggan</th>
+                    <th>Trip</th>
+                    <th>Jumlah pax</th>
+                    <th>Hotel / bilik</th>
+                    <th>Status</th>
+                    <th class="actions-head">Tindakan</th>
+                  </tr>
+                </thead>
+                <tbody id="bookingRows"></tbody>
+              </table>
+            </div>
+
+            <div class="empty-state" id="emptyState" hidden>
+              <strong id="emptyTitle">Belum ada booking</strong>
+              <span id="emptyText">Rekod pertama akan muncul di sini selepas disimpan.</span>
+            </div>
+          </section>
+        </section>
+      </main>
+    </div>
+
+    <section class="account-menu-backdrop" id="accountMenu" hidden>
+      <div class="account-menu-card" role="dialog" aria-modal="true" aria-labelledby="accountMenuTitle">
+        <div class="panel-heading">
+          <div>
+            <p class="eyebrow">Menu</p>
+            <h2 id="accountMenuTitle">Manage account</h2>
+          </div>
+          <button class="icon-button" id="closeAccountMenu" type="button" aria-label="Tutup menu akaun">X</button>
+        </div>
+
+        <form id="accountForm" autocomplete="off">
+          <label>
+            Nama akaun
+            <input id="accountName" name="accountName" type="text" required />
+          </label>
+
+          <label>
+            Email akaun
+            <input id="accountEmail" name="accountEmail" type="email" required />
+          </label>
+
+          <label>
+            Password sekarang
+            <input id="accountCurrentPassword" name="accountCurrentPassword" type="password" required />
+          </label>
+
+          <label>
+            Password baru
+            <input id="accountNewPassword" name="accountNewPassword" type="password" minlength="4" placeholder="Kosongkan jika tak mahu tukar" />
+          </label>
+
+          <label>
+            Confirm password baru
+            <input id="accountNewPasswordConfirm" name="accountNewPasswordConfirm" type="password" minlength="4" />
+          </label>
+
+          <p class="form-alert" id="accountAlert" role="status"></p>
+
+          <div class="form-actions">
+            <button class="primary-button" type="submit">Simpan akaun</button>
+            <button class="ghost-button" id="cancelAccountMenu" type="button">Tutup</button>
+          </div>
+        </form>
+      </div>
+    </section>
+
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+    <script src="app.js"></script>
+  </body>
+</html>
